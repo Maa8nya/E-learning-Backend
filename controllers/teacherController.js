@@ -14,8 +14,6 @@ const Test = require('../models/Test'); // For clarity
 const ScheduledSubject = require('../models/scheduledSubject'); //Neww
 const schedule = require('node-schedule');//forTest
 const Announcement = require('../models/Announcement');
-const TeacherAnnouncement = require('../models/TeacherAnnouncement'); // adjust path
-
 const { DateTime } = require('luxon');
 const multer = require('multer');
 const path = require('path');
@@ -1632,50 +1630,30 @@ exports.getTeacherTests = async (req, res) => {
 // ---------------------- TEACHER CREATE ANNOUNCEMENT ----------------------
 exports.createAnnouncement = async (req, res) => {
   try {
-    const { title, message, audience } = req.body;
+    const { title, message, audience } = req.body; // audience comes from radio button
     const teacherId = req.user.id;
 
-    if (!title || !message || !audience) {
-      return res.status(400).json({ message: 'Title, message and audience are required' });
+    if (!title || !message) {
+      return res.status(400).json({ message: 'Title and message are required' });
     }
 
     const announcements = [];
 
-    const baseData = {
-      title,
-      description: message,        // 🔑 schema expects description
-      announcementType: 'student', // 🔑 valid enum value
-      createdBy: teacherId
-    };
-
     if (audience === 'Students Only') {
-      const ann = new TeacherAnnouncement({
-        ...baseData
-      });
+      const ann = new Announcement({ title, message, targetAudience: 'student', createdBy: teacherId });
       await ann.save();
       announcements.push(ann);
-
     } else if (audience === 'Parents Only') {
-      const ann = new TeacherAnnouncement({
-        ...baseData
-      });
+      const ann = new Announcement({ title, message, targetAudience: 'parent', createdBy: teacherId });
       await ann.save();
       announcements.push(ann);
-
     } else if (audience === 'Parents & Students') {
-      const annStudent = new TeacherAnnouncement({
-        ...baseData
-      });
-
-      const annParent = new TeacherAnnouncement({
-        ...baseData
-      });
-
+      // create two announcements: one for student, one for parent
+      const annStudent = new Announcement({ title, message, targetAudience: 'student', createdBy: teacherId });
+      const annParent = new Announcement({ title, message, targetAudience: 'parent', createdBy: teacherId });
       await annStudent.save();
       await annParent.save();
-
       announcements.push(annStudent, annParent);
-
     } else {
       return res.status(400).json({ message: 'Invalid audience selection' });
     }
@@ -1685,15 +1663,12 @@ exports.createAnnouncement = async (req, res) => {
       count: announcements.length,
       announcements
     });
-
   } catch (err) {
     console.error('Teacher Create Announcement Error:', err);
-    return res.status(500).json({
-      message: 'Server error',
-      error: err.message
-    });
+    return res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
+
 
 
 // ---------------------- GET MY ANNOUNCEMENTS ----------------------
@@ -2042,5 +2017,155 @@ exports.getMyLessons = async (req, res) => {
   } catch (error) {
     console.error('Get My Lessons Error:', error);
     return res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+
+// ==============================
+// TEACHER HOMEPAGE ----- MAANYA
+// ==============================
+exports.getTeacherDashboard = async (req, res) => {
+  try {
+    const teacherId = req.params.teacherId;
+
+    // Active classes
+    const activeClasses = await Class.countDocuments({
+      teacher: teacherId
+    });
+
+    // Pending assignments
+    const pendingAssignments = await Assignment.countDocuments({
+      uploadedBy: teacherId,
+      status: 'active'
+    });
+
+    // Attendance & GPA from test results
+    const testResults = await TestResult.find()
+      .populate({
+        path: 'testID',
+        match: { createdBy: teacherId },
+        populate: { path: 'subject', select: 'subjectName' }
+      });
+
+    const validResults = testResults.filter(r => r.testID);
+
+    const attendancePercentage = validResults.length
+      ? Math.round(
+          (validResults.filter(r => r.marks > 0).length /
+            validResults.length) * 100
+        )
+      : 0;
+
+    const averageGpa = validResults.length
+      ? (
+          validResults.reduce(
+            (sum, r) => sum + (r.marks / r.testID.totalMarks) * 10,
+            0
+          ) / validResults.length
+        ).toFixed(2)
+      : 0;
+
+    // Recent activity (Assignments + Notes)
+    const recentAssignments = await Assignment.find({
+      uploadedBy: teacherId
+    })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate('subject', 'subjectName');
+
+    const recentNotes = await Note.find({
+      uploadedBy: teacherId
+    })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate('subject', 'subjectName');
+
+    const recentActivity = [
+      ...recentAssignments.map(a => ({
+        id: a._id,
+        action: 'uploaded assignment',
+        subject: a.subject?.subjectName,
+        createdAt: a.createdAt,
+        user: { name: 'You', avatar: '' }
+      })),
+      ...recentNotes.map(n => ({
+        id: n._id,
+        action: 'uploaded notes',
+        subject: n.subject?.subjectName,
+        createdAt: n.createdAt,
+        user: { name: 'You', avatar: '' }
+      }))
+    ].sort((a, b) => b.createdAt - a.createdAt);
+
+    // FINAL RESPONSE (Frontend Friendly)
+    return res.json({
+      stats: {
+        activeClasses,
+        pendingAssignments,
+        classAttendance: attendancePercentage,
+        averageGpa
+      },
+      recentActivity
+    });
+
+  } catch (error) {
+    console.error('Teacher Dashboard Error:', error);
+    return res.status(500).json({ message: 'Dashboard fetch failed' });
+  }
+};
+
+// ==============================
+// WEEKLY ATTENDANCE (AGGREGATED)
+// ==============================
+exports.getWeeklyAttendance = async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+
+    const startOfWeek = new Date();
+    startOfWeek.setDate(startOfWeek.getDate() - 6);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const attendance = await Attendance.aggregate([
+      {
+        $match: {
+          markedBy: new mongoose.Types.ObjectId(teacherId),
+          date: { $gte: startOfWeek }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            day: { $dayOfWeek: "$date" },
+            date: {
+              $dateToString: { format: "%Y-%m-%d", date: "$date" }
+            }
+          },
+          present: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "present"] }, 1, 0]
+            }
+          },
+          absent: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "absent"] }, 1, 0]
+            }
+          }
+        }
+      },
+      { $sort: { "_id.date": 1 } }
+    ]);
+
+    const formatted = attendance.map(a => ({
+      day: new Date(a._id.date).toLocaleDateString("en-US", {
+        weekday: "short"
+      }),
+      present: a.present,
+      absent: a.absent
+    }));
+
+    res.json(formatted);
+  } catch (error) {
+    console.error("Weekly Attendance Error:", error);
+    res.status(500).json({ message: "Failed to fetch weekly attendance" });
   }
 };

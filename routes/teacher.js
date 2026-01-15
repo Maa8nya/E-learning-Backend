@@ -107,3 +107,5 @@ router.get('/next-lesson', protect, teacherController.getNextLesson);
 // Get subjects handled by teacher (for dropdown)
 router.get('/my-subjects', protect, teacherController.getSubjectsByTeacher);
 
+router.get('/dashboard/:teacherId', authMiddleware,teacherController.getTeacherDashboard); //TEACHER HOMEPAGE
+router.get("/attendance/weekly/:teacherId",authMiddleware,teacherController.getWeeklyAttendance); //WEEKLY ATTENDANCE REPORT
