@@ -217,11 +217,17 @@ exports.studentRequest = async (req, res) => {
     let governmentProofPath = undefined;
     if (req.files) {
       if (req.files.profilePicture && req.files.profilePicture.length > 0) {
-        profilePicturePath = path.join('/uploads', 'students', req.files.profilePicture[0].filename).replace(/\\/g, '/');
-      }
-      if (req.files.governmentProof && req.files.governmentProof.length > 0) {
-        governmentProofPath = path.join('/uploads', 'students', req.files.governmentProof[0].filename).replace(/\\/g, '/');
-      }
+  profilePicturePath = path
+    .join('/uploads', 'students', 'profile', req.files.profilePicture[0].filename)
+    .replace(/\\/g, '/');
+}
+
+if (req.files.governmentProof && req.files.governmentProof.length > 0) {
+  governmentProofPath = path
+    .join('/uploads', 'students', 'government', req.files.governmentProof[0].filename)
+    .replace(/\\/g, '/');
+}
+
     }
 
     // Since passwordHash is required by schema, create a random placeholder hash

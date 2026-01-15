@@ -141,16 +141,25 @@ const userSchema = new mongoose.Schema(
     },
     // ----------------------- END: Student-only fields -----------------------
 
-    // Parent-specific fields
-    linkedStudents: [
-      {
-        studentId: { type: String },
-        relationship: {
-          type: String,
-          enum: ['Father', 'Mother', 'Guardian', 'Other'],
-        },
+    // Linked students (used by parents, students, and guardians)
+
+    linkedStudents: {
+  type: [
+    {
+      studentId: { type: String },
+      relationship: {
+        type: String,
+        enum: ['Father', 'Mother', 'Guardian', 'Sibling', 'Other'],
       },
-    ],
+    },
+  ],
+  validate: {
+    validator: function () {
+      return ['parent', 'student', 'teacher'].includes(this.role);
+    },
+    message: 'linkedStudents can only be set for parent, student, or teacher roles',
+  },
+},
 
     // Teacher-specific fields
     gender: { 
@@ -162,16 +171,31 @@ const userSchema = new mongoose.Schema(
     state: { type: String, trim: true },
     city: { type: String, trim: true },
   subjectSpecialization: [{ 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Subject' 
-  }],
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'Subject',
+  validate: {
+    validator: function () {
+      return this.role === 'teacher';
+    },
+    message: 'subjectSpecialization only valid for teachers',
+  }
+}],
     qualification: { type: String },
     idProofUrl: { type: String },
     teacherStatus: {
-      type: String,
-      enum: ['pending', 'approved', 'rejected'],
-      default: 'pending',
+  type: String,
+  enum: ['pending', 'approved', 'rejected'],
+  default: function () {
+    return this.role === 'teacher' ? 'pending' : undefined;
+  },
+  validate: {
+    validator: function (v) {
+      if (v == null) return true;
+      return this.role === 'teacher';
     },
+    message: 'teacherStatus only valid for teachers',
+  }
+},
     rejectionReason: { type: String },
     approvedAt: { type: Date },
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

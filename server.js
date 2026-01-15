@@ -43,6 +43,11 @@ app.use(bodyParser.json()); // or app.use(express.json());
 
 
 // Routes
+const path = require("path");
+
+// ✅ Serve uploaded files (profile pics, govt proofs, PDFs, images)
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
 
 app.use('/api/teacher', teacherRoutes);
 app.use('/api/auth', authRoutes);

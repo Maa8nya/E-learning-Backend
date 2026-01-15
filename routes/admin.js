@@ -92,6 +92,14 @@ router.post(
   adminController.sendAnnouncementToGroups
 );
 
+//admin view the notes,profilepic etc
+router.get(
+  '/files/user/:userId/:field',
+  protect,
+  authorize('admin'),
+  adminController.viewUserFile
+);
+
 // ---------------------- SUBJECT DETAILS ROUTE ----------------------
 router.get(
   '/assigned-subjects',

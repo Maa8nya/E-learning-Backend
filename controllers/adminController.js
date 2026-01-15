@@ -12,6 +12,9 @@ const Attendance = require('../models/Attendance'); // Make sure path is correct
 // const User = require('../models/User');
 const mongoose = require('mongoose'); // Need this for ID validation
 const LessonPlanner = require('../models/LessonPlanner');
+const fs = require('fs');
+const path = require('path');
+
 
 // ---------------------- GET PENDING TEACHERS ----------------------
 exports.getPendingTeachers = async (req, res) => {
@@ -1270,5 +1273,70 @@ exports.getAssignedSubjectDetails = async (req, res) => {
   } catch (err) {
     console.error('Get Assigned Subject Details Error:', err);
     return res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+// ==============================
+// ADMIN VIEW USER FILE (PROFILE PIC / GOVT PROOF / PDF)
+// ==============================
+exports.viewUserFile = async (req, res) => {
+  try {
+    const { userId, field } = req.params;
+
+    const ALLOWED_FIELDS = [
+      'profilePicture',
+      'governmentProof',
+      'idProofUrl'
+    ];
+
+    if (!ALLOWED_FIELDS.includes(field)) {
+      return res.status(400).json({ message: 'Invalid file field' });
+    }
+
+    const user = await User.findById(userId).select(field);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const relativePath = user[field];
+    if (!relativePath) {
+      return res.status(404).json({ message: 'File not available' });
+    }
+
+    // 🔥 FIX: remove leading slash
+    const safeRelativePath = relativePath.startsWith('/')
+      ? relativePath.slice(1)
+      : relativePath;
+
+    // ✅ Correct absolute path
+    const absolutePath = path.join(__dirname, '..', safeRelativePath);
+
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ message: 'File missing on server' });
+    }
+
+    const ext = path.extname(absolutePath).toLowerCase();
+    const mimeTypes = {
+      '.pdf': 'application/pdf',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+    };
+
+    res.setHeader(
+      'Content-Type',
+      mimeTypes[ext] || 'application/octet-stream'
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${path.basename(absolutePath)}"`
+    );
+
+    fs.createReadStream(absolutePath).pipe(res);
+
+  } catch (err) {
+    console.error('Admin View User File Error:', err);
+    res.status(500).json({ message: 'Server error' });
   }
 };
