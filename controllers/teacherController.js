@@ -9,7 +9,6 @@ const Note = require('../models/Note');
 const Class = require('../models/Class');
 const Subject = require('../models/Subject');
 const Assignment = require('../models/Assignment'); // ✅ ADD THIS LINE
-const TestResult = require('../models/TestResult');
 const Test = require('../models/Test'); // For clarity
 const ScheduledSubject = require('../models/scheduledSubject'); //Neww
 const schedule = require('node-schedule');//forTest
@@ -2167,5 +2166,68 @@ exports.getWeeklyAttendance = async (req, res) => {
   } catch (error) {
     console.error("Weekly Attendance Error:", error);
     res.status(500).json({ message: "Failed to fetch weekly attendance" });
+  }
+};
+
+const TestResult = require("../models/TestResult");
+const mongoose = require("mongoose");
+
+exports.getSubjectPerformance = async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+
+    const data = await TestResult.aggregate([
+      // Join Test
+      {
+        $lookup: {
+          from: "tests",
+          localField: "testID",
+          foreignField: "_id",
+          as: "test"
+        }
+      },
+      { $unwind: "$test" },
+
+      // Only tests created by this teacher
+      {
+        $match: {
+          "test.teacher": new mongoose.Types.ObjectId(teacherId)
+        }
+      },
+
+      // Join Subject
+      {
+        $lookup: {
+          from: "subjects",
+          localField: "test.subject",
+          foreignField: "_id",
+          as: "subject"
+        }
+      },
+      { $unwind: "$subject" },
+
+      // Group by subject
+      {
+        $group: {
+          _id: "$subject._id",
+          subject: { $first: "$subject.name" },
+          average: { $avg: "$marks" }
+        }
+      },
+
+      // Clean output
+      {
+        $project: {
+          _id: 0,
+          subject: 1,
+          average: { $round: ["$average", 1] }
+        }
+      }
+    ]);
+
+    res.json(data);
+  } catch (error) {
+    console.error("Subject performance error:", error);
+    res.status(500).json({ message: "Failed to fetch subject performance" });
   }
 };
