@@ -127,4 +127,19 @@ router.get(
   teacherController.getSubjectPerformance
 );
 
+router.get(
+  "/grade-distribution/:teacherId",
+  teacherController.getGradeDistribution
+);
+
+router.get(
+  "/assignment-status/:teacherId",
+  teacherController.getAssignmentStatus
+);
+
+router.get(
+  "/monthly-trend/:teacherId",
+  teacherController.getMonthlyTrend
+);
+
 module.exports = router;

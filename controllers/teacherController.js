@@ -8,7 +8,6 @@ const Meeting = require('../models/Meeting');
 const Note = require('../models/Note');
 const Class = require('../models/Class');
 const Subject = require('../models/Subject');
-const Assignment = require('../models/Assignment'); // ✅ ADD THIS LINE
 const Test = require('../models/Test'); // For clarity
 const ScheduledSubject = require('../models/scheduledSubject'); //Neww
 const schedule = require('node-schedule');//forTest
@@ -1085,7 +1084,7 @@ exports.uploadMultipleMarksByRollNumber = async (req, res) => {
 };
 
 // ---------------------- GET STUDENTS BY CLASS AND SUBJECT ----------------------
-// ---------------------- GET STUDENTS BY CLASS AND SUBJECT ----------------------
+
 exports.getStudentsByClassAndSubject = async (req, res) => {
   try {
     const { className, subjectName } = req.params;
@@ -1444,11 +1443,11 @@ exports.teacherCreateTest = async (req, res) => {
       });
     }
 
-    // 1️⃣ Get teacher's timezone
+    // Get teacher's timezone
     const teacher = await User.findById(req.user?._id);
     const teacherRegion = countryToTimezone[teacher?.countryRegion] || 'UTC';
 
-    // 2️⃣ Parse and convert testDate to UTC
+    //  Parse and convert testDate to UTC
     let testDateUTC;
 
     if (testDate) {
@@ -1485,7 +1484,7 @@ exports.teacherCreateTest = async (req, res) => {
       testDateUTC = new Date();
     }
 
-    // 3️⃣ Save the test
+    //  Save the test
     const newTest = await Test.create({
       title,
       subject,
@@ -2229,5 +2228,195 @@ exports.getSubjectPerformance = async (req, res) => {
   } catch (error) {
     console.error("Subject performance error:", error);
     res.status(500).json({ message: "Failed to fetch subject performance" });
+  }
+};
+
+//Function to get grade distribution (uses existing TestResult)
+
+exports.getGradeDistribution = async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+
+    const data = await TestResult.aggregate([
+      // Join Test
+      {
+        $lookup: {
+          from: "tests",
+          localField: "testID",
+          foreignField: "_id",
+          as: "test"
+        }
+      },
+      { $unwind: "$test" },
+
+      // Filter by teacher
+      {
+        $match: {
+          "test.teacher": new mongoose.Types.ObjectId(teacherId)
+        }
+      },
+
+      // Convert marks → grade
+      {
+        $project: {
+          grade: {
+            $switch: {
+              branches: [
+                { case: { $gte: ["$marks", 90] }, then: "A+" },
+                { case: { $gte: ["$marks", 80] }, then: "A" },
+                { case: { $gte: ["$marks", 70] }, then: "B+" },
+                { case: { $gte: ["$marks", 60] }, then: "B" }
+              ],
+              default: "C"
+            }
+          }
+        }
+      },
+
+      // Group by grade
+      {
+        $group: {
+          _id: "$grade",
+          value: { $sum: 1 }
+        }
+      },
+
+      // Shape output
+      {
+        $project: {
+          _id: 0,
+          name: "$_id",
+          value: 1
+        }
+      }
+    ]);
+
+    res.json(data);
+  } catch (err) {
+    console.error("Grade distribution error:", err);
+    res.status(500).json({ message: "Failed to fetch grade distribution" });
+  }
+};
+
+//Assignment Status graph
+const Assignment = require("../models/Assignment");
+const AssignmentSubmission = require("../models/AssignmentSubmission");
+
+exports.getAssignmentStatus = async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+
+    // Total assignments by teacher
+    const assignments = await Assignment.find({
+      teacher: teacherId
+    }).select("_id dueDate");
+
+    const assignmentIds = assignments.map(a => a._id);
+
+    // All submissions for those assignments
+    const submissions = await AssignmentSubmission.find({
+      assignment: { $in: assignmentIds }
+    });
+
+    let submitted = 0;
+    let late = 0;
+
+    const assignmentMap = {};
+    assignments.forEach(a => {
+      assignmentMap[a._id.toString()] = a.dueDate;
+    });
+
+    submissions.forEach(sub => {
+      const dueDate = assignmentMap[sub.assignment.toString()];
+      if (sub.submittedAt <= dueDate) {
+        submitted++;
+      } else {
+        late++;
+      }
+    });
+
+    const totalExpected = assignments.length * 1; // per class logic can be extended
+    const pending = Math.max(
+      totalExpected - (submitted + late),
+      0
+    );
+
+    res.json([
+      { name: "Submitted", value: submitted },
+      { name: "Late", value: late },
+      { name: "Pending", value: pending }
+    ]);
+  } catch (err) {
+    console.error("Assignment status error:", err);
+    res.status(500).json({ message: "Failed to fetch assignment status" });
+  }
+};
+
+// Monthly Trend (Attendance + Performance)
+const Attendance = require("../models/Attendance");
+
+exports.getMonthlyTrend = async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+
+    // Get teacher subjects
+    const subjects = await Subject.find({ teacher: teacherId }).select("_id");
+    const subjectIds = subjects.map(s => s._id);
+
+    // Attendance aggregation
+    const attendanceAgg = await Attendance.aggregate([
+      { $match: { subject: { $in: subjectIds } } },
+      {
+        $group: {
+          _id: { month: { $month: "$date" } },
+          total: { $sum: 1 },
+          present: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "present"] }, 1, 0]
+            }
+          }
+        }
+      }
+    ]);
+
+    // Test performance aggregation
+    const performanceAgg = await TestResult.aggregate([
+      {
+        $group: {
+          _id: { month: { $month: "$createdAt" } },
+          avgMarks: { $avg: "$marks" }
+        }
+      }
+    ]);
+
+    // Month mapping
+    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+    const resultMap = {};
+
+    attendanceAgg.forEach(a => {
+      resultMap[a._id.month] = {
+        month: MONTHS[a._id.month - 1],
+        attendance: Math.round((a.present / a.total) * 100),
+        performance: 0
+      };
+    });
+
+    performanceAgg.forEach(p => {
+      if (!resultMap[p._id.month]) {
+        resultMap[p._id.month] = {
+          month: MONTHS[p._id.month - 1],
+          attendance: 0,
+          performance: Math.round(p.avgMarks)
+        };
+      } else {
+        resultMap[p._id.month].performance = Math.round(p.avgMarks);
+      }
+    });
+
+    res.json(Object.values(resultMap));
+  } catch (err) {
+    console.error("Monthly trend error:", err);
+    res.status(500).json({ message: "Failed to fetch monthly trend" });
   }
 };
